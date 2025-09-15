@@ -1,10 +1,5 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:typed_data';
 import 'package:balanca/screens/device_list_page.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 // Observador de rotas para gerenciar eventos de navegação
 final RouteObserver<ModalRoute<void>> routeObserver =

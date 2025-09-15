@@ -11,6 +11,8 @@ O objetivo é realizar a conexão Bluetooth com a balança, receber e exibir os 
 - Parsing dos dados recebidos (STX/ETX)
 - Exibição do peso e log de comunicação
 
+<img src="https://github.com/user-attachments/assets/f6a38efe-68fa-458c-9755-230ce4390881" width="50%" />
+
 ## Requisitos
 - Flutter
 - Dispositivo Android com Bluetooth
