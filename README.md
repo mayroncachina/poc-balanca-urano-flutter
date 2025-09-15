@@ -1,16 +1,26 @@
-# balanca
+# PoC Balança Urano Bluetooth
 
-A new Flutter project.
+Este projeto é uma Prova de Conceito (PoC) para comunicação via Bluetooth com balanças da Urano, modelo [Balança computadora US 31/2 POP-S com adaptador bluetooth](https://www.urano.com.br/produto/balanca-computadora-us-312-pop-s-com-adaptador-bt/).
 
-## Getting Started
+O objetivo é realizar a conexão Bluetooth com a balança, receber e exibir os dados de pesagem automaticamente.
 
-This project is a starting point for a Flutter application.
+## Funcionalidades
+- Seleção do dispositivo Bluetooth
+- Pareamento e conexão automática
+- Envio de comandos ENQ para leitura de peso
+- Parsing dos dados recebidos (STX/ETX)
+- Exibição do peso e log de comunicação
 
-A few resources to get you started if this is your first Flutter project:
+## Requisitos
+- Flutter
+- Dispositivo Android com Bluetooth
+- Balança Urano US 31/2 POP-S com adaptador Bluetooth
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+## Como usar
+1. Instale os pacotes do projeto (`flutter pub get`)
+2. Execute o app em um dispositivo Android
+3. Selecione a balança Urano na lista de dispositivos Bluetooth
+4. Inicie a pesagem e visualize os dados recebidos
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+---
+Projeto para testes internos e validação de integração Bluetooth com balanças Urano.
