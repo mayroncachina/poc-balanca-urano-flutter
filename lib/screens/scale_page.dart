@@ -33,6 +33,7 @@ class _ScalePageState extends State<ScalePage> {
   bool _connecting = false;
   bool _isConnected = false;
   String? _parsedWeight;
+  String? _detectedProtocol;
   String _log = '';
 
   final List<int> _byteBuffer = <int>[];
@@ -131,19 +132,17 @@ class _ScalePageState extends State<ScalePage> {
     _sub?.cancel();
     _sub = conn.input?.listen(
       (Uint8List data) {
-        _byteBuffer.addAll(data);
         if (_showHexLog) {
-          _appendLog('HEX ' + _toHex(data));
+          _appendLog('HEX ${_toHex(data)}');
         } else {
           final chunk = utf8.decode(data, allowMalformed: true);
           _appendLog(
-            'TXT ' + chunk.replaceAll('\n', '\\n').replaceAll('\r', '\\r'),
+            'TXT ${chunk.replaceAll('\n', '\\n').replaceAll('\r', '\\r')}',
           );
-        }
-        final frames = _extractFramesFromBuffer(_byteBuffer);
-        for (final frame in frames) {
-          final w = _parseFramedWeight(frame);
-          if (w != null) _parsedWeight = w;
+          // Usa função utilitária para extrair o peso, independente do formato
+          final pesoExtraido = extractWeightFromString(chunk);
+          _appendLog('Peso extraído: \'${pesoExtraido ?? '--'}\'');
+          _parsedWeight = pesoExtraido ?? '--';
         }
         setState(() {});
       },
@@ -232,16 +231,69 @@ class _ScalePageState extends State<ScalePage> {
     final payload = frame.sublist(start + 1, end);
     final ascii = _safeAscii(payload);
     if (ascii == null) {
-      _appendLog('FRAME ' + _toHex(Uint8List.fromList(payload)));
+      _appendLog('FRAME ${_toHex(Uint8List.fromList(payload))}');
       return null;
     }
-    _appendLog('FRAME "' + ascii + '"');
+    _appendLog('FRAME "$ascii"');
+
+    // Mensagens especiais: só letras I, N ou S
+    if (ascii.isNotEmpty && ascii.runes.every((c) => c == 73)) {
+      return 'Estabilizando...';
+    }
+    if (ascii.isNotEmpty && ascii.runes.every((c) => c == 78)) {
+      return 'Liberando...';
+    }
+    if (ascii.isNotEmpty && ascii.runes.every((c) => c == 83)) {
+      return 'Excesso...';
+    }
+
+    // Protocolo URANO_12: ESC T1 ESC ...
+    if (payload.length >= 46 &&
+        payload[0] == 27 &&
+        payload[1] == 84 &&
+        payload[2] == 49 &&
+        payload[3] == 27) {
+      // Peso está em 6 bytes a partir do 32
+      final sub = payload.length >= 38 ? payload.sublist(32, 38) : <int>[];
+      final str = _safeAscii(sub) ?? '';
+      final data = str.replaceAll('.', '') + '00';
+      return data.isNotEmpty ? '${data.trim()} g' : null;
+    }
+    // Protocolo URANO_USE_PII: ESC T2 ESC B ESC ...
+    if (payload.length >= 55 &&
+        payload[0] == 27 &&
+        payload[1] == 84 &&
+        payload[2] == 50 &&
+        payload[3] == 27 &&
+        payload[4] == 66 &&
+        payload[5] == 27) {
+      // Peso está em 6 bytes a partir do 18
+      final sub = payload.length >= 24 ? payload.sublist(18, 24) : <int>[];
+      final str = _safeAscii(sub) ?? '';
+      final data = str.replaceAll(',', '');
+      return data.isNotEmpty ? '${data.trim()} g' : null;
+    }
+
+    // Peso formato especial: '* PESO: 0.4kg' ou similar
+    final pesoMatch = RegExp(
+      r'PESO[^\d+\-]*([+\-]?\d+(?:[.,]\d+)?)\s*(kg|g)',
+      caseSensitive: false,
+    ).firstMatch(ascii);
+    if (pesoMatch != null) {
+      final valor = pesoMatch
+          .group(1)!
+          .replaceAll(',', '.'); // normaliza decimal
+      final unidade = pesoMatch.group(2)!.toLowerCase();
+      return unidade == 'kg' ? '$valor kg' : '$valor g';
+    }
+
+    // Peso padrão
     final kg = RegExp(r'([-+]?\d+(?:[\.,]\d+)?)\s*(kg|KG)');
     final gm = RegExp(r'([-+]?\d+)\s*(g|G)(?![a-zA-Z])');
     final m1 = kg.firstMatch(ascii);
     if (m1 != null) {
       final n = m1.group(1)!.replaceAll(',', '.');
-      return n + ' kg';
+      return '$n kg';
     }
     final m2 = gm.firstMatch(ascii);
     if (m2 != null) {
@@ -249,20 +301,68 @@ class _ScalePageState extends State<ScalePage> {
       final sign = raw.startsWith('-') ? '-' : '';
       final digits = raw.replaceFirst(RegExp(r'^[-+]?'), '');
       final trimmed = digits.replaceFirst(RegExp(r'^0+(?!$)'), '');
-      return sign + trimmed + ' g';
+      return '$sign$trimmed g';
     }
     final plain = RegExp(r'([-+]?\d+(?:[\.,]\d+)?)');
     final p = plain.firstMatch(ascii);
     if (p != null) {
       final s = p.group(1)!;
       if (s.contains('.') || s.contains(',')) {
-        return s.replaceAll(',', '.') + ' kg';
+        return '${s.replaceAll(',', '.')} kg';
       } else {
         final sign = s.startsWith('-') ? '-' : '';
         final digits = s.replaceFirst(RegExp(r'^[-+]?'), '');
         final trimmed = digits.replaceFirst(RegExp(r'^0+(?!$)'), '');
-        return sign + trimmed + ' g';
+        return '$sign$trimmed g';
       }
+    }
+    return null;
+  }
+
+  String? _detectProtocol(List<int> frame) {
+    if (frame.length >= 8 &&
+        frame[0] == 0x02 &&
+        frame[frame.length - 1] == 0x03) {
+      final payload = frame.sublist(1, frame.length - 1);
+      final ascii = _safeAscii(payload) ?? '';
+      // URANO_12
+      if (payload.length >= 46 &&
+          payload[0] == 27 &&
+          payload[1] == 84 &&
+          payload[2] == 49 &&
+          payload[3] == 27) {
+        return 'URANO_12';
+      }
+      // URANO_USE_PII
+      if (payload.length >= 55 &&
+          payload[0] == 27 &&
+          payload[1] == 84 &&
+          payload[2] == 50 &&
+          payload[3] == 27 &&
+          payload[4] == 66 &&
+          payload[5] == 27) {
+        return 'URANO_USE_PII';
+      }
+      // Protocolo padrão Urano
+      if (RegExp(r'([-+]?\d+[\.,]?\d*)\s*(kg|KG|g|G)').hasMatch(ascii)) {
+        return 'Urano padrão';
+      }
+      if (ascii.startsWith('P=')) {
+        return 'Protocolo P=';
+      }
+      if (frame.length == 8) {
+        return 'Frame 8 bytes';
+      }
+    }
+    // Mensagens especiais
+    if (frame.isNotEmpty && frame.every((b) => b == 73)) {
+      return 'Estabilizando...';
+    }
+    if (frame.isNotEmpty && frame.every((b) => b == 78)) {
+      return 'Liberando...';
+    }
+    if (frame.isNotEmpty && frame.every((b) => b == 83)) {
+      return 'Excesso...';
     }
     return null;
   }
@@ -300,6 +400,38 @@ class _ScalePageState extends State<ScalePage> {
   void _appendLog(String msg) {
     _log = (_log + (msg.endsWith('\n') ? msg : '$msg\n'));
     setState(() {});
+  }
+
+  /// Extrai o valor do peso de uma string, suportando múltiplos formatos.
+  String? extractWeightFromString(String input) {
+    // 1. Formato Urano: "PESO: 0.5kg" ou "PESO: 193B * PESO: 0.5kgEP01"
+    final urano = RegExp(
+      r'PESO[^\d+\-]*([+\-]?\d+(?:[.,]\d+)?)\s*(kg|g)',
+      caseSensitive: false,
+    ).firstMatch(input);
+    if (urano != null) {
+      final valor = urano.group(1)!.replaceAll(',', '.');
+      final unidade = urano.group(2)!.toLowerCase();
+      return unidade == 'kg' ? '$valor kg' : '$valor g';
+    }
+    // 2. Qualquer número seguido de kg/g
+    final fallback = RegExp(
+      r'([+\-]?\d+(?:[.,]\d+)?)\s*(kg|g)',
+      caseSensitive: false,
+    ).firstMatch(input);
+    if (fallback != null) {
+      final valor = fallback.group(1)!.replaceAll(',', '.');
+      final unidade = fallback.group(2)!.toLowerCase();
+      return unidade == 'kg' ? '$valor kg' : '$valor g';
+    }
+    // 3. Apenas número (última linha, comum em balanças simples)
+    final plain = RegExp(r'([+\-]?\d+(?:[.,]\d+)?)').firstMatch(input);
+    if (plain != null) {
+      final s = plain.group(1)!.replaceAll(',', '.');
+      // Unidade padrão: kg
+      return '$s g';
+    }
+    return null;
   }
 
   @override
@@ -423,6 +555,17 @@ class _ScalePageState extends State<ScalePage> {
                       style: const TextStyle(
                         fontSize: 40,
                         fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _detectedProtocol != null
+                          ? 'Protocolo: $_detectedProtocol'
+                          : 'Protocolo: --',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        color: Colors.grey,
                       ),
                     ),
                   ],
